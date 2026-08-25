@@ -14,7 +14,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Circle, Marker, type Region } from 'react-native-maps';
+import MapView, { Circle, Marker, type MapType, type Region } from 'react-native-maps';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import { launchCamera } from 'react-native-image-picker';
 import BackgroundGeolocation from 'react-native-background-geolocation';
@@ -27,6 +27,7 @@ import { syncUnsyncedMusters } from '../services/syncService';
 import { generateUuidV4 } from '../utils/uuid';
 import { ensureCameraPermission } from '../utils/cameraPermission';
 import MapZoomControls from '../components/MapZoomControls';
+import MapTypeToggle from '../components/MapTypeToggle';
 import {
   MUSTER_CHECK_IN,
   MUSTER_CHECK_OUT,
@@ -36,7 +37,7 @@ import {
 } from '../constants/attendance';
 
 const BRANCH_RADIUS_METERS = 1000;
-const MIN_DELTA = 0.0008;
+const MIN_DELTA = 0.00015;
 const MAX_DELTA = 40;
 
 const palette = {
@@ -107,6 +108,7 @@ function MarkAttendanceScreen() {
   const [checkingSession, setCheckingSession] = useState(true);
   const mapRef = useRef<MapView>(null);
   const regionRef = useRef<Region>({ latitude: 20.5937, longitude: 78.9629, latitudeDelta: 10, longitudeDelta: 10 });
+  const [mapType, setMapType] = useState<MapType>('standard');
 
   const handleZoom = (factor: number) => {
     const current = regionRef.current;
@@ -152,7 +154,8 @@ function MarkAttendanceScreen() {
         };
         const address = await reverseGeocode(nextCoords.latitude, nextCoords.longitude);
         setLocationText(address ?? `${nextCoords.latitude.toFixed(6)}, ${nextCoords.longitude.toFixed(6)}`);
-      } catch {
+      } catch (err) {
+        console.error('[MarkAttendance] location error:', err);
         setLocationText('Could not determine location. Check location permissions.');
       }
     })();
@@ -333,6 +336,7 @@ function MarkAttendanceScreen() {
                 <MapView
                   ref={mapRef}
                   style={styles.map}
+                  mapType={mapType}
                   initialRegion={regionRef.current}
                   onRegionChangeComplete={region => {
                     regionRef.current = region;
@@ -353,6 +357,10 @@ function MarkAttendanceScreen() {
                   ))}
                 </MapView>
                 <MapZoomControls onZoomIn={() => handleZoom(0.5)} onZoomOut={() => handleZoom(2)} />
+                <MapTypeToggle
+                  mapType={mapType}
+                  onToggle={() => setMapType(t => (t === 'standard' ? 'hybrid' : 'standard'))}
+                />
               </>
             ) : (
               <View style={[styles.map, styles.mapLoading]}>

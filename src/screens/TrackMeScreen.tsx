@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, type MapType, type Region } from 'react-native-maps';
 import BackgroundGeolocation, { type Location, type Subscription } from 'react-native-background-geolocation';
 import { useAuth } from '../context/AuthContext';
 import { ensureLocationReady } from '../services/geolocationSetup';
@@ -22,8 +22,9 @@ import { generateUuidV4 } from '../utils/uuid';
 import { getTrackingState, setTrackingState, clearTrackingState } from '../services/storage';
 import { smoothPath } from '../utils/smoothPath';
 import MapZoomControls from '../components/MapZoomControls';
+import MapTypeToggle from '../components/MapTypeToggle';
 
-const MIN_DELTA = 0.0008;
+const MIN_DELTA = 0.00015;
 const MAX_DELTA = 40;
 
 const palette = {
@@ -78,6 +79,7 @@ function TrackMeScreen() {
     longitudeDelta: 10,
   });
   const hasCenteredRef = useRef(false);
+  const [mapType, setMapType] = useState<MapType>('standard');
 
   useEffect(() => {
     (async () => {
@@ -209,15 +211,23 @@ function TrackMeScreen() {
         <MapView
           ref={mapRef}
           style={styles.map}
+          mapType={mapType}
           initialRegion={regionRef.current}
           onRegionChangeComplete={region => {
             regionRef.current = region;
           }}
         >
           {smoothedPath.length > 1 && <Polyline coordinates={smoothedPath} strokeColor={palette.primary} strokeWidth={4} />}
-          {lastPoint && <Marker coordinate={lastPoint} title="Current position" />}
+          {path.length > 0 && <Marker coordinate={path[0]} title="Start" pinColor="green" />}
+          {lastPoint && path.length > 1 && (
+            <Marker coordinate={lastPoint} title="Current position" pinColor="red" />
+          )}
         </MapView>
         <MapZoomControls onZoomIn={() => handleZoom(0.5)} onZoomOut={() => handleZoom(2)} />
+        <MapTypeToggle
+          mapType={mapType}
+          onToggle={() => setMapType(t => (t === 'standard' ? 'hybrid' : 'standard'))}
+        />
       </View>
 
       <View style={styles.form}>

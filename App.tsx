@@ -11,10 +11,12 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { NavigationContainer } from '@react-navigation/native';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import RootNavigator from './src/navigation/RootNavigator';
+import { useAutoSync } from './src/services/useAutoSync';
 
 function AppShell() {
   const isDarkMode = useColorScheme() === 'dark';
-  const { initializing } = useAuth();
+  const { initializing, user } = useAuth();
+  useAutoSync(!!user);
 
   if (initializing) {
     return (

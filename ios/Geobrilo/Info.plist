@@ -41,12 +41,20 @@
 	<string>Geobrilo tracks your trip location in the background so tracking continues while the app is not in the foreground.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Geobrilo needs camera access to capture your attendance selfie.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>Geobrilo uses motion data to detect when you're walking or driving, so trip tracking can save battery between location updates.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Geobrilo needs photo library access so you can choose a profile photo.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>location</string>
 		<string>fetch</string>
+		<string>processing</string>
+	</array>
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.transistorsoft.fetch</string>
+		<string>com.transistorsoft.locationmanager</string>
 	</array>
 	<key>RCTNewArchEnabled</key>
 	<true/>

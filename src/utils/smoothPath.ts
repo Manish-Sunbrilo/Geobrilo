@@ -12,7 +12,38 @@ function catmullRom(p0: number, p1: number, p2: number, p3: number, t: number): 
   );
 }
 
-export function smoothPath(points: LatLng[], segments = 8): LatLng[] {
+/**
+ * A curve fit alone can't remove noise — it passes exactly through every
+ * point it's given, jitter included. GPS fixes get noisiest right when
+ * you slow down to turn, so that's exactly where raw jitter reads as
+ * "jagged" once curved. Averaging each point with its neighbors first
+ * removes that noise while keeping the route's real shape and endpoints.
+ */
+function denoise(points: LatLng[], windowRadius = 1): LatLng[] {
+  if (points.length <= 2) {
+    return points;
+  }
+
+  const result = points.map((_, i) => {
+    const start = Math.max(0, i - windowRadius);
+    const end = Math.min(points.length - 1, i + windowRadius);
+    let latSum = 0;
+    let lonSum = 0;
+    for (let j = start; j <= end; j++) {
+      latSum += points[j].latitude;
+      lonSum += points[j].longitude;
+    }
+    const count = end - start + 1;
+    return { latitude: latSum / count, longitude: lonSum / count };
+  });
+
+  result[0] = points[0];
+  result[result.length - 1] = points[points.length - 1];
+  return result;
+}
+
+export function smoothPath(rawPoints: LatLng[], segments = 10): LatLng[] {
+  const points = denoise(rawPoints);
   if (points.length < 3) {
     return points;
   }

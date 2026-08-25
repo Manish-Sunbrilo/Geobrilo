@@ -10,7 +10,7 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, type Region } from 'react-native-maps';
+import MapView, { Marker, Polyline, type MapType, type Region } from 'react-native-maps';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getTripReport } from '../services/tripApi';
@@ -19,8 +19,9 @@ import { getAllTrips, insertTripFromApi, tripExists, type TripRow } from '../db/
 import { getLocationsForTrip, insertTripLocationFromApi } from '../db/tripLocationsRepo';
 import { smoothPath } from '../utils/smoothPath';
 import MapZoomControls from '../components/MapZoomControls';
+import MapTypeToggle from '../components/MapTypeToggle';
 
-const MIN_DELTA = 0.0008;
+const MIN_DELTA = 0.00003;
 const MAX_DELTA = 40;
 
 const palette = {
@@ -57,18 +58,29 @@ function haversineMeters(a: LatLng, b: LatLng): number {
 }
 
 function filterPoints(points: LatLng[]): LatLng[] {
-  const result: LatLng[] = [];
-  for (const point of points) {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const result: LatLng[] = [points[0]];
+  // The true final point is intentionally always kept below, so it's excluded
+  // from this jitter/outlier pass to avoid it being dropped twice.
+  for (let i = 1; i < points.length - 1; i++) {
+    const point = points[i];
     const prev = result[result.length - 1];
-    if (!prev) {
-      result.push(point);
-      continue;
-    }
     const distance = haversineMeters(prev, point);
     if (distance < 5 || distance > 300) {
       continue;
     }
     result.push(point);
+  }
+
+  const last = points[points.length - 1];
+  if (points.length > 1 && last !== result[result.length - 1]) {
+    // Always keep the trip's real end position — it's almost always close to
+    // the previous point (you're stationary when you tap "End Trip"), so the
+    // >5m jitter filter above would otherwise drop it and hide the End marker.
+    result.push(last);
   }
   return result;
 }
@@ -98,6 +110,7 @@ function ShowMyTripScreen() {
   const { user } = useAuth();
   const mapRef = useRef<MapView>(null);
   const regionRef = useRef<Region>({ latitude: 20.5937, longitude: 78.9629, latitudeDelta: 10, longitudeDelta: 10 });
+  const [mapType, setMapType] = useState<MapType>('standard');
 
   const [trips, setTrips] = useState<TripRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -212,6 +225,7 @@ function ShowMyTripScreen() {
             <MapView
               ref={mapRef}
               style={styles.map}
+              mapType={mapType}
               initialRegion={regionRef.current}
               onRegionChangeComplete={region => {
                 regionRef.current = region;
@@ -221,11 +235,15 @@ function ShowMyTripScreen() {
                 <Polyline coordinates={smoothedPoints} strokeColor={palette.primary} strokeWidth={4} />
               )}
               {points.length > 0 && <Marker coordinate={points[0]} title="Start" pinColor="green" />}
-              {points.length > 1 && (
+              {points.length > 0 && selectedTrip?.end_time && (
                 <Marker coordinate={points[points.length - 1]} title="End" pinColor="red" />
               )}
             </MapView>
             <MapZoomControls onZoomIn={() => handleZoom(0.5)} onZoomOut={() => handleZoom(2)} />
+            <MapTypeToggle
+              mapType={mapType}
+              onToggle={() => setMapType(t => (t === 'standard' ? 'hybrid' : 'standard'))}
+            />
           </View>
 
           {selectedTrip && (

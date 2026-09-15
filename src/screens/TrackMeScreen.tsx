@@ -11,7 +11,9 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, type MapType, type Region } from 'react-native-maps';
+import MapView, { Marker, type MapType, type Region } from 'react-native-maps';
+import RoutePolyline from '../components/RoutePolyline';
+import DirectionArrowMarker from '../components/DirectionArrowMarker';
 import BackgroundGeolocation, { type Location, type Subscription } from 'react-native-background-geolocation';
 import { useAuth } from '../context/AuthContext';
 import { ensureLocationReady } from '../services/geolocationSetup';
@@ -19,8 +21,11 @@ import { insertTrip, updateTripEnd, updateTripRemark } from '../db/tripsRepo';
 import { getLocationsForTrip, insertTripLocation } from '../db/tripLocationsRepo';
 import { syncUnsyncedTripEnds, syncUnsyncedTripLocations, syncUnsyncedTripStarts } from '../services/syncService';
 import { generateUuidV4 } from '../utils/uuid';
-import { getTrackingState, setTrackingState, clearTrackingState } from '../services/storage';
+import { getTrackingState, setTrackingState, clearTrackingState, setLastAliveAt } from '../services/storage';
 import { smoothPath } from '../utils/smoothPath';
+import { snapToRoads } from '../services/roads';
+import { formatIstDateTime } from '../utils/datetime';
+import type { LatLng } from '../utils/geo';
 import MapZoomControls from '../components/MapZoomControls';
 import MapTypeToggle from '../components/MapTypeToggle';
 
@@ -50,7 +55,13 @@ const palette = {
   },
 };
 
-type LatLng = { latitude: number; longitude: number };
+/** Live road-snapping is throttled (both by time and by how many new points
+ * have come in) since -- unlike a one-time snap when reviewing a finished
+ * trip -- this repeats for as long as the trip is active, and each call is a
+ * billed Roads API request. Tune these if the route updates feel too
+ * sluggish or the request volume needs to come down further. */
+const LIVE_SNAP_MIN_INTERVAL_MS = 20000;
+const LIVE_SNAP_MIN_NEW_POINTS = 8;
 
 function defaultDescription(): string {
   const now = new Date();
@@ -67,6 +78,13 @@ function TrackMeScreen() {
   const [isTracking, setIsTracking] = useState(false);
   const [tripGuid, setTripGuid] = useState<string | null>(null);
   const [path, setPath] = useState<LatLng[]>([]);
+  const [heading, setHeading] = useState(0);
+  const [snappedPath, setSnappedPath] = useState<LatLng[]>([]);
+  const [snappedUpToCount, setSnappedUpToCount] = useState(0);
+  const pathRef = useRef<LatLng[]>([]);
+  const snapRequestIdRef = useRef(0);
+  const lastSnapAtRef = useRef(0);
+  const lastSnapCountRef = useRef(0);
   const [isBusy, setIsBusy] = useState(false);
   const [remarkModalVisible, setRemarkModalVisible] = useState(false);
   const [remark, setRemark] = useState('');
@@ -89,7 +107,10 @@ function TrackMeScreen() {
         setTripGuid(state.tripGuid);
         setDescription(state.description);
         const existingPoints = await getLocationsForTrip(state.tripGuid);
-        setPath(existingPoints.map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) })));
+        const restoredPath = existingPoints.map(p => ({ latitude: Number(p.latitude), longitude: Number(p.longitude) }));
+        pathRef.current = restoredPath;
+        setPath(restoredPath);
+        maybeSnapLivePath(restoredPath);
         await attachLocationListener(state.tripGuid);
       }
     })();
@@ -98,12 +119,44 @@ function TrackMeScreen() {
     };
   }, []);
 
+  const maybeSnapLivePath = (currentPath: LatLng[]) => {
+    if (currentPath.length < 2) {
+      return;
+    }
+    const now = Date.now();
+    const grewEnough = currentPath.length - lastSnapCountRef.current >= LIVE_SNAP_MIN_NEW_POINTS;
+    const enoughTimePassed = now - lastSnapAtRef.current >= LIVE_SNAP_MIN_INTERVAL_MS;
+    if (!grewEnough && !enoughTimePassed) {
+      return;
+    }
+    lastSnapAtRef.current = now;
+    lastSnapCountRef.current = currentPath.length;
+    const requestId = ++snapRequestIdRef.current;
+    const snappedUpTo = currentPath.length;
+    snapToRoads(currentPath).then(result => {
+      if (snapRequestIdRef.current === requestId) {
+        setSnappedPath(result);
+        setSnappedUpToCount(snappedUpTo);
+      }
+    });
+  };
+
   const attachLocationListener = async (guid: string) => {
     await ensureLocationReady();
     subscriptionRef.current?.remove();
     subscriptionRef.current = BackgroundGeolocation.onLocation(async (location: Location) => {
       const point: LatLng = { latitude: location.coords.latitude, longitude: location.coords.longitude };
-      setPath(prev => [...prev, point]);
+      const nextPath = [...pathRef.current, point];
+      pathRef.current = nextPath;
+      setPath(nextPath);
+      // GPS heading is -1 (undefined) when the device isn't moving fast
+      // enough for a reliable bearing -- keep pointing the last known
+      // direction rather than snapping to an arbitrary value.
+      if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+        setHeading(location.coords.heading);
+      }
+      setLastAliveAt(formatIstDateTime()).catch(() => undefined);
+      maybeSnapLivePath(nextPath);
       if (!user) {
         return;
       }
@@ -115,7 +168,7 @@ function TrackMeScreen() {
         location.coords.altitude ?? 0,
         location.coords.speed ?? 0,
         location.coords.heading ?? 0,
-        new Date().toISOString().slice(0, 19).replace('T', ' '),
+        formatIstDateTime(new Date()),
         user.userid,
       );
       syncUnsyncedTripLocations().catch(() => undefined);
@@ -129,18 +182,31 @@ function TrackMeScreen() {
     setIsBusy(true);
     try {
       const guid = generateUuidV4();
-      const startTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const startTime = formatIstDateTime(new Date());
       await insertTrip(guid, description, startTime, user.userid);
       syncUnsyncedTripStarts().catch(() => undefined);
 
       await setTrackingState({ isTracking: true, tripGuid: guid, description });
       setTripGuid(guid);
       setIsTracking(true);
+      pathRef.current = [];
       setPath([]);
+      setSnappedPath([]);
+      setSnappedUpToCount(0);
+      lastSnapAtRef.current = 0;
+      lastSnapCountRef.current = 0;
+      hasCenteredRef.current = false;
 
       await ensureLocationReady();
       await BackgroundGeolocation.requestPermission();
       await BackgroundGeolocation.start();
+      // Force "moving" pace immediately rather than trusting the SDK's own
+      // Activity-Recognition-based motion detection -- on hardware missing
+      // a gyroscope/magnetometer (confirmed via this device's own sensor
+      // log), that detection is unreliable and can declare "not moving"
+      // right away, dropping into a low-power geofence-only mode that stops
+      // recording further points for the rest of the trip.
+      await BackgroundGeolocation.changePace(true);
       await attachLocationListener(guid);
     } catch {
       Alert.alert('Could not start tracking', 'Please check location permissions and try again.');
@@ -156,7 +222,7 @@ function TrackMeScreen() {
     setRemarkModalVisible(false);
     setIsBusy(true);
     try {
-      const endTime = new Date().toISOString().slice(0, 19).replace('T', ' ');
+      const endTime = formatIstDateTime(new Date());
       await updateTripRemark(tripGuid, remark);
       await updateTripEnd(tripGuid, endTime);
       syncUnsyncedTripEnds().catch(() => undefined);
@@ -168,7 +234,19 @@ function TrackMeScreen() {
 
       setIsTracking(false);
       setTripGuid(null);
-      setPath([]);
+      // Path is intentionally kept (not cleared) so the completed route with
+      // its Start/End pins stays visible on the map -- it's only cleared
+      // when a new trip actually starts.
+      // One final snap ignores the live throttle -- worth the extra call to
+      // leave the just-finished trip showing its cleanest possible route.
+      const requestId = ++snapRequestIdRef.current;
+      const finalPointCount = pathRef.current.length;
+      snapToRoads(pathRef.current).then(result => {
+        if (snapRequestIdRef.current === requestId) {
+          setSnappedPath(result);
+          setSnappedUpToCount(finalPointCount);
+        }
+      });
       setRemark('');
       setDescription(defaultDescription());
     } finally {
@@ -178,6 +256,16 @@ function TrackMeScreen() {
 
   const lastPoint = path[path.length - 1];
   const smoothedPath = useMemo(() => smoothPath(path), [path]);
+  // Only the points not yet covered by a confirmed snap -- smoothed on its
+  // own so the route keeps extending live instead of freezing at the last
+  // snap while waiting for the next throttled one.
+  const livePathTail = useMemo(() => smoothPath(path.slice(snappedUpToCount)), [path, snappedUpToCount]);
+  const displayPath = useMemo(() => {
+    if (snappedPath.length < 2) {
+      return smoothedPath;
+    }
+    return livePathTail.length > 0 ? [...snappedPath, ...livePathTail] : snappedPath;
+  }, [snappedPath, livePathTail, smoothedPath]);
 
   useEffect(() => {
     if (!lastPoint) {
@@ -217,10 +305,13 @@ function TrackMeScreen() {
             regionRef.current = region;
           }}
         >
-          {smoothedPath.length > 1 && <Polyline coordinates={smoothedPath} strokeColor={palette.primary} strokeWidth={4} />}
+          <RoutePolyline coordinates={displayPath} color={palette.primary} />
           {path.length > 0 && <Marker coordinate={path[0]} title="Start" pinColor="green" />}
-          {lastPoint && path.length > 1 && (
-            <Marker coordinate={lastPoint} title="Current position" pinColor="red" />
+          {lastPoint && path.length > 1 && isTracking && (
+            <DirectionArrowMarker coordinate={lastPoint} heading={heading} color={palette.primary} />
+          )}
+          {lastPoint && path.length > 1 && !isTracking && (
+            <Marker coordinate={lastPoint} title="End" pinColor="red" />
           )}
         </MapView>
         <MapZoomControls onZoomIn={() => handleZoom(0.5)} onZoomOut={() => handleZoom(2)} />

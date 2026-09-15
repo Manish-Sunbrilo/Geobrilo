@@ -12,11 +12,15 @@ import { NavigationContainer } from '@react-navigation/native';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import RootNavigator from './src/navigation/RootNavigator';
 import { useAutoSync } from './src/services/useAutoSync';
+import { useGeofenceMonitoring } from './src/services/useGeofenceMonitoring';
+import { useTripLifecycleEvents } from './src/services/useTripLifecycleEvents';
 
 function AppShell() {
   const isDarkMode = useColorScheme() === 'dark';
   const { initializing, user } = useAuth();
   useAutoSync(!!user);
+  useGeofenceMonitoring(!!user);
+  useTripLifecycleEvents(!!user);
 
   if (initializing) {
     return (

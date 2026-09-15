@@ -24,7 +24,7 @@
       android:supportsRtl="true">
       <meta-data
         android:name="com.google.android.geo.API_KEY"
-        android:value="AIzaSyDeeQRTW5RCfOjGTzSQFa8wqfsKBbAiLZ4" />
+        android:value="AIzaSyA54I3pccCD6ZP5oKr7FQEDqRz5kDm3InE" />
       <!--
         Placeholder Transistorsoft license key. react-native-background-geolocation
         blocks location permission requests in RELEASE builds on Android without a

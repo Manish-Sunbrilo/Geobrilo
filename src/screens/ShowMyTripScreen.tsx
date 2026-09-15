@@ -10,7 +10,8 @@ import {
   View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import MapView, { Marker, Polyline, type MapType, type Region } from 'react-native-maps';
+import MapView, { Marker, type MapType, type Region } from 'react-native-maps';
+import RoutePolyline from '../components/RoutePolyline';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getTripReport } from '../services/tripApi';
@@ -18,6 +19,9 @@ import { getStoredCompanyCode } from '../services/storage';
 import { getAllTrips, insertTripFromApi, tripExists, type TripRow } from '../db/tripsRepo';
 import { getLocationsForTrip, insertTripLocationFromApi } from '../db/tripLocationsRepo';
 import { smoothPath } from '../utils/smoothPath';
+import { snapToRoads } from '../services/roads';
+import { getIstParts } from '../utils/datetime';
+import { haversineMeters, type LatLng } from '../utils/geo';
 import MapZoomControls from '../components/MapZoomControls';
 import MapTypeToggle from '../components/MapTypeToggle';
 
@@ -42,20 +46,6 @@ const palette = {
     textSecondary: '#9CA3AF',
   },
 };
-
-type LatLng = { latitude: number; longitude: number };
-
-function haversineMeters(a: LatLng, b: LatLng): number {
-  const R = 6371000;
-  const dLat = ((b.latitude - a.latitude) * Math.PI) / 180;
-  const dLon = ((b.longitude - a.longitude) * Math.PI) / 180;
-  const lat1 = (a.latitude * Math.PI) / 180;
-  const lat2 = (b.latitude * Math.PI) / 180;
-  const sinDLat = Math.sin(dLat / 2);
-  const sinDLon = Math.sin(dLon / 2);
-  const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
-  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-}
 
 function filterPoints(points: LatLng[]): LatLng[] {
   if (points.length === 0) {
@@ -117,16 +107,18 @@ function ShowMyTripScreen() {
   const [pickerVisible, setPickerVisible] = useState(false);
   const [selectedTrip, setSelectedTrip] = useState<TripRow | null>(null);
   const [points, setPoints] = useState<LatLng[]>([]);
+  const [snappedPoints, setSnappedPoints] = useState<LatLng[]>([]);
+  const snapRequestIdRef = useRef(0);
 
   const loadTrips = useCallback(async () => {
     if (!user) {
       return;
     }
     setLoading(true);
-    const now = new Date();
-    const fromDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-01`;
-    const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    const toDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(lastDay)}`;
+    const istNow = getIstParts();
+    const fromDate = `${istNow.year}-${pad(istNow.month + 1)}-01`;
+    const lastDay = new Date(istNow.year, istNow.month + 1, 0).getDate();
+    const toDate = `${istNow.year}-${pad(istNow.month + 1)}-${pad(lastDay)}`;
     const companyCode = (await getStoredCompanyCode()) ?? '';
 
     const result = await getTripReport(user.userid, fromDate, toDate, companyCode);
@@ -168,8 +160,10 @@ function ShowMyTripScreen() {
   );
 
   const handleSelectTrip = async (trip: TripRow) => {
+    const requestId = ++snapRequestIdRef.current;
     setPickerVisible(false);
     setSelectedTrip(trip);
+    setSnappedPoints([]);
     const rows = await getLocationsForTrip(trip.tripguid);
     const rawPoints = rows.map(r => ({ latitude: Number(r.latitude), longitude: Number(r.longitude) }));
     const filtered = filterPoints(rawPoints);
@@ -181,10 +175,37 @@ function ShowMyTripScreen() {
           animated: true,
         });
       });
+      // Road-snapping is progressive enhancement: the client-side smoothed
+      // path (below) renders immediately, then upgrades to the road-aligned
+      // one once the Roads API call resolves -- or stays as-is if it fails.
+      snapToRoads(filtered).then(result => {
+        if (snapRequestIdRef.current !== requestId) {
+          return;
+        }
+        setSnappedPoints(result);
+        if (result.length > 1) {
+          // Re-fit to whatever's now actually being displayed -- the initial
+          // fit above used the raw points, but a road-snapped route can
+          // shift or extend beyond that framing, otherwise leaving the
+          // (still-rendered) line drawn outside the visible viewport, which
+          // looks exactly like the route disappearing.
+          requestAnimationFrame(() => {
+            mapRef.current?.fitToCoordinates(result, {
+              edgePadding: { top: 60, bottom: 60, left: 60, right: 60 },
+              animated: true,
+            });
+          });
+        }
+      });
     }
   };
 
   const smoothedPoints = useMemo(() => smoothPath(points), [points]);
+  // Start/End markers stay anchored to the actual recorded points -- only
+  // the path line itself uses the road-snapped version, since snapping can
+  // shift an endpoint (e.g. a driveway or building entrance) onto the
+  // nearest road.
+  const displayPath = snappedPoints.length > 1 ? snappedPoints : smoothedPoints;
 
   const handleZoom = (factor: number) => {
     const current = regionRef.current;
@@ -231,9 +252,7 @@ function ShowMyTripScreen() {
                 regionRef.current = region;
               }}
             >
-              {smoothedPoints.length > 1 && (
-                <Polyline coordinates={smoothedPoints} strokeColor={palette.primary} strokeWidth={4} />
-              )}
+              <RoutePolyline coordinates={displayPath} color={palette.primary} />
               {points.length > 0 && <Marker coordinate={points[0]} title="Start" pinColor="green" />}
               {points.length > 0 && selectedTrip?.end_time && (
                 <Marker coordinate={points[points.length - 1]} title="End" pinColor="red" />

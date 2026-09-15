@@ -7,4 +7,6 @@ export type AppStackParamList = {
   Profile: undefined;
   TrackMe: undefined;
   ShowMyTrip: { tripguid?: string } | undefined;
+  ApplyLeave: undefined;
+  SalarySlip: undefined;
 };

@@ -158,3 +158,35 @@ export function pushTripLocation(record: TripLocationPushRecord): Promise<boolea
   const listXml = `<trackdatalist><trackdata>${fields}</trackdata></trackdatalist>`;
   return pushToQueue(listXml, 'trackdata_xxx_x_api_push_multiple_trackdata', record.companycode);
 }
+
+export type TripEventPushRecord = {
+  tripguid: string;
+  eventtype: string;
+  eventat: string;
+  detail: string;
+  userid: string;
+  deviceSystemId: string;
+  companycode: string;
+};
+
+/**
+ * No backend endpoint for this exists yet -- the key below follows the same
+ * naming convention as the other push-queue endpoints (tracktrip_xxx_x_api_push_multiple_*)
+ * so it's a drop-in once the backend implements handling for it. Until then
+ * this will keep queuing locally and retrying via the normal sync cycle
+ * (it just won't be acknowledged, so `pushToQueue` returns false and the
+ * event stays unsynced -- harmless, matches how offline pushes already behave).
+ */
+export function pushTripEvent(record: TripEventPushRecord): Promise<boolean> {
+  const fields = buildFieldsXml([
+    ['tripguid', record.tripguid],
+    ['eventtype', record.eventtype],
+    ['eventat', record.eventat],
+    ['detail', record.detail],
+    ['userid', record.userid],
+    ['deviceuid', record.deviceSystemId],
+    ['companycode', record.companycode],
+  ]);
+  const listXml = `<tripeventlist><tripevent>${fields}</tripevent></tripeventlist>`;
+  return pushToQueue(listXml, 'tripevent_xxx_x_api_push_multiple_tripevent', record.companycode);
+}

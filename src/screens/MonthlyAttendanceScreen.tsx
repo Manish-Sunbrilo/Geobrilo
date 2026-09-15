@@ -12,6 +12,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useFocusEffect } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { getMusterReport } from '../services/attendanceApi';
+import { getLocalMusterRangeSummary, type LocalMusterRangeEntry } from '../db/musterRepo';
+import { getIstParts, formatIstDate } from '../utils/datetime';
 import type { MusterRecord } from '../types/attendance';
 
 const palette = {
@@ -87,10 +89,11 @@ function MonthlyAttendanceScreen() {
   const theme = isDarkMode ? palette.dark : palette.light;
   const { user } = useAuth();
 
-  const today = new Date();
-  const [year] = useState(today.getFullYear());
-  const [month] = useState(today.getMonth());
+  const istNow = getIstParts();
+  const [year] = useState(istNow.year);
+  const [month] = useState(istNow.month);
   const [records, setRecords] = useState<MusterRecord[]>([]);
+  const [localOverrides, setLocalOverrides] = useState<Map<string, LocalMusterRangeEntry>>(new Map());
   const [holidayDates, setHolidayDates] = useState<Set<string>>(new Set());
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -105,8 +108,12 @@ function MonthlyAttendanceScreen() {
     const fromDate = `${year}-${pad(month + 1)}-01`;
     const lastDay = new Date(year, month + 1, 0).getDate();
     const toDate = `${year}-${pad(month + 1)}-${pad(lastDay)}`;
-    const result = await getMusterReport(user.userid, fromDate, toDate);
+    const [result, localSummary] = await Promise.all([
+      getMusterReport(user.userid, fromDate, toDate),
+      getLocalMusterRangeSummary(user.userid, fromDate, toDate),
+    ]);
     setLoading(false);
+    setLocalOverrides(localSummary);
     if (!result.success) {
       setError(result.message);
       return;
@@ -128,8 +135,25 @@ function MonthlyAttendanceScreen() {
         map.set(normalizeDateKey(record.date), record);
       }
     }
+    // Local SQLite is more current/accurate than the server report -- it
+    // reflects check-ins/outs the instant they're recorded, already in local
+    // (IST) time, isn't subject to the server's own report-generation lag,
+    // and (unlike a naive last-checkout-minus-first-checkin span) sums every
+    // completed session so a lunch break isn't counted as worked time. A
+    // missing checkOut here means the day's latest session is still open --
+    // that's not backfilled from a stale server value.
+    for (const [day, entry] of localOverrides) {
+      const existing = map.get(day);
+      map.set(day, {
+        date: day,
+        checkIn: entry.checkIn ? entry.checkIn.slice(11, 16) : existing?.checkIn,
+        checkOut: entry.checkOut ? entry.checkOut.slice(11, 16) : undefined,
+        minuteDifference: Math.round(entry.totalSeconds / 60),
+        remark: existing?.remark,
+      });
+    }
     return map;
-  }, [records]);
+  }, [records, localOverrides]);
 
   const grid = useMemo(() => buildMonthGrid(year, month), [year, month]);
   const monthLabel = new Date(year, month, 1).toLocaleDateString(undefined, {
@@ -137,12 +161,18 @@ function MonthlyAttendanceScreen() {
     year: 'numeric',
   });
 
+  const allRecords = useMemo(
+    () =>
+      Array.from(attendanceByDate.values()).sort((a, b) => (b.date ?? '').localeCompare(a.date ?? '')),
+    [attendanceByDate],
+  );
+
   const selectedRecord = selectedDate ? attendanceByDate.get(selectedDate) : undefined;
   const visibleRecords = selectedDate
     ? selectedRecord
       ? [selectedRecord]
       : []
-    : records;
+    : allRecords;
 
   const renderCell = (date: Date | null, index: number) => {
     if (!date) {
@@ -152,7 +182,7 @@ function MonthlyAttendanceScreen() {
     const hasAttendance = attendanceByDate.has(key);
     const isHoliday = holidayDates.has(key);
     const isSunday = date.getDay() === 0;
-    const isPast = date < new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const isPast = key < formatIstDate();
     const isSelected = selectedDate === key;
 
     let cellStyle = styles.cellDefault;
@@ -200,9 +230,13 @@ function MonthlyAttendanceScreen() {
         </View>
 
         {loading && <ActivityIndicator style={styles.loader} color={palette.primary} />}
-        {error && <Text style={styles.errorText}>{error}</Text>}
+        {error && (
+          <Text style={styles.noticeText}>
+            {error} Showing what's saved on this device below.
+          </Text>
+        )}
 
-        {!loading && !error && (
+        {!loading && (
           <View style={[styles.listCard, { backgroundColor: theme.card }]}>
             <View style={styles.listHeaderRow}>
               <Text style={[styles.listHeaderCell, styles.dateCol, { color: theme.textSecondary }]}>
@@ -298,10 +332,12 @@ const styles = StyleSheet.create({
   loader: {
     marginVertical: 20,
   },
-  errorText: {
-    color: palette.absentText,
+  noticeText: {
+    color: palette.holidayText,
     textAlign: 'center',
+    fontSize: 12,
     marginTop: 12,
+    marginBottom: 4,
   },
   listCard: {
     borderRadius: 16,

@@ -9,6 +9,8 @@ import MonthlyAttendanceScreen from '../screens/MonthlyAttendanceScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import TrackMeScreen from '../screens/TrackMeScreen';
 import ShowMyTripScreen from '../screens/ShowMyTripScreen';
+import ApplyLeaveScreen from '../screens/ApplyLeaveScreen';
+import SalarySlipScreen from '../screens/SalarySlipScreen';
 import type { AppStackParamList } from './types';
 
 const Stack = createNativeStackNavigator<AppStackParamList>();
@@ -58,6 +60,16 @@ function RootNavigator() {
             name="ShowMyTrip"
             component={ShowMyTripScreen}
             options={{ ...HEADER_OPTIONS, title: 'Show My Trip' }}
+          />
+          <Stack.Screen
+            name="ApplyLeave"
+            component={ApplyLeaveScreen}
+            options={{ ...HEADER_OPTIONS, title: 'Apply Leave' }}
+          />
+          <Stack.Screen
+            name="SalarySlip"
+            component={SalarySlipScreen}
+            options={{ ...HEADER_OPTIONS, title: 'Salary Slip' }}
           />
         </>
       )}

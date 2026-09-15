@@ -17,6 +17,8 @@ import { useFocusEffect, useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { getMusterReport } from '../services/attendanceApi';
+import { getLocalMusterStatusForToday } from '../db/musterRepo';
+import { formatIstDate, parseIstDateTime } from '../utils/datetime';
 import type { AppStackParamList } from '../navigation/types';
 
 const palette = {
@@ -49,11 +51,6 @@ const palette = {
 };
 
 type Status = 'present' | 'completed' | 'not_marked';
-
-function todayIso(date = new Date()): string {
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
-}
 
 function parseTimeToDate(value: string, reference: Date): Date | null {
   const trimmed = value.trim();
@@ -91,6 +88,8 @@ const QUICK_ACTIONS: QuickAction[] = [
   { key: 'TrackMe', label: 'Track Me', icon: '🧭' },
   { key: 'MonthlyAttendance', label: 'Monthly Attendance', icon: '📅' },
   { key: 'ShowMyTrip', label: 'Show My Trip', icon: '🗺️' },
+  // ApplyLeave / SalarySlip screens still exist and are routed, just hidden
+  // from Quick Actions for now.
   { key: 'Profile', label: 'Profile', icon: '👤' },
 ];
 
@@ -117,17 +116,52 @@ function HomeScreen() {
     }
   }, []);
 
+  /**
+   * `baseSeconds` is however much was already worked in earlier, completed
+   * sessions today -- checking in again after a checkout resumes ticking
+   * from that running total instead of restarting at zero.
+   */
+  const applyStatus = useCallback(
+    (next: Status, options?: { baseSeconds?: number; openCheckIn?: Date; totalSeconds?: number }) => {
+      stopTicking();
+      setStatus(next);
+      if (next === 'completed') {
+        setElapsedSeconds(options?.totalSeconds ?? 0);
+      } else if (next === 'present' && options?.openCheckIn) {
+        const base = options.baseSeconds ?? 0;
+        const openCheckInMs = options.openCheckIn.getTime();
+        const tick = () => setElapsedSeconds(base + (Date.now() - openCheckInMs) / 1000);
+        tick();
+        intervalRef.current = setInterval(tick, 1000);
+      } else {
+        setElapsedSeconds(0);
+      }
+    },
+    [stopTicking],
+  );
+
   const loadTodayAttendance = useCallback(async () => {
     if (!user) {
       return;
     }
-    const today = todayIso();
-    const result = await getMusterReport(user.userid, today, today);
-    stopTicking();
+    const today = formatIstDate();
 
+    // Local SQLite is checked first: it reflects a check-in the instant it's
+    // recorded, unlike the server report, which lags behind the fire-and-forget
+    // sync push and the server's own queue-processing delay.
+    const local = await getLocalMusterStatusForToday(user.userid, today);
+    if (local.status === 'present') {
+      applyStatus('present', { baseSeconds: local.baseSeconds, openCheckIn: parseIstDateTime(local.openCheckInAt) });
+      return;
+    }
+    if (local.status === 'completed') {
+      applyStatus('completed', { totalSeconds: local.totalSeconds });
+      return;
+    }
+
+    const result = await getMusterReport(user.userid, today, today);
     if (!result.success || result.records.length === 0) {
-      setStatus('not_marked');
-      setElapsedSeconds(0);
+      applyStatus('not_marked');
       return;
     }
 
@@ -137,18 +171,13 @@ function HomeScreen() {
     const checkOutDate = record.checkOut ? parseTimeToDate(record.checkOut, now) : null;
 
     if (checkInDate && checkOutDate) {
-      setStatus('completed');
-      setElapsedSeconds((checkOutDate.getTime() - checkInDate.getTime()) / 1000);
+      applyStatus('completed', { totalSeconds: (checkOutDate.getTime() - checkInDate.getTime()) / 1000 });
     } else if (checkInDate) {
-      setStatus('present');
-      const tick = () => setElapsedSeconds((Date.now() - checkInDate.getTime()) / 1000);
-      tick();
-      intervalRef.current = setInterval(tick, 1000);
+      applyStatus('present', { openCheckIn: checkInDate });
     } else {
-      setStatus('not_marked');
-      setElapsedSeconds(0);
+      applyStatus('not_marked');
     }
-  }, [user, stopTicking]);
+  }, [user, applyStatus]);
 
   useFocusEffect(
     useCallback(() => {

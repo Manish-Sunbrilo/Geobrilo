@@ -36,6 +36,16 @@ const SCHEMA_STATEMENTS = [
     syncdate TEXT DEFAULT NULL,
     is_sent INTEGER DEFAULT 0
   );`,
+  `CREATE TABLE IF NOT EXISTS tripevents (
+    idtripevent INTEGER PRIMARY KEY AUTOINCREMENT,
+    tripguid TEXT,
+    eventtype TEXT,
+    eventat TEXT,
+    detail TEXT,
+    userid TEXT,
+    syncdate TEXT DEFAULT NULL,
+    is_sent INTEGER DEFAULT 0
+  );`,
   `CREATE TABLE IF NOT EXISTS muster (
     idmuster INTEGER PRIMARY KEY AUTOINCREMENT,
     musterdate TEXT,

@@ -11,6 +11,7 @@ const KEYS = {
   sessionUser: 'geobrilo_session_user',
   trackingState: 'geobrilo_tracking_state',
   deviceConfig: 'geobrilo_device_config',
+  lastAliveAt: 'geobrilo_last_alive_at',
 } as const;
 
 async function getOrCreate(key: string): Promise<string> {
@@ -96,4 +97,18 @@ export async function setTrackingState(state: TrackingState): Promise<void> {
 
 export async function clearTrackingState(): Promise<void> {
   await AsyncStorage.removeItem(KEYS.trackingState);
+}
+
+/**
+ * Timestamp of the last confirmed sign that the app/tracking service was
+ * actually running (a heartbeat or a location fix) -- used to retroactively
+ * detect a gap (device off, killed, or otherwise unreachable) once tracking
+ * resumes, since there's no reliable way to be notified of that in real time.
+ */
+export async function getLastAliveAt(): Promise<string | null> {
+  return AsyncStorage.getItem(KEYS.lastAliveAt);
+}
+
+export async function setLastAliveAt(value: string): Promise<void> {
+  await AsyncStorage.setItem(KEYS.lastAliveAt, value);
 }

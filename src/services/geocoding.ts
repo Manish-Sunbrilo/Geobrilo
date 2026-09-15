@@ -1,17 +1,18 @@
-/**
- * Lightweight reverse geocoding via OpenStreetMap Nominatim (free, no API
- * key). The reference Android app used the on-device Geocoder for the same
- * purpose; this is the closest key-free equivalent available in RN without
- * adding a paid Google/Apple geocoding dependency.
- */
+import { GOOGLE_MAPS_API_KEY } from '../config/mapsConfig';
+
+/** Reverse geocoding via Google's Geocoding API (Maps Platform), using the
+ * same key configured for the native map SDKs. */
 export async function reverseGeocode(latitude: number, longitude: number): Promise<string | null> {
   try {
     const response = await fetch(
-      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}&zoom=18&addressdetails=1`,
-      { headers: { 'User-Agent': 'GeobriloApp/1.0' } },
+      `https://maps.googleapis.com/maps/api/geocode/json?latlng=${latitude},${longitude}&key=${GOOGLE_MAPS_API_KEY}`,
     );
     const data = await response.json();
-    return typeof data?.display_name === 'string' ? data.display_name : null;
+    if (data?.status !== 'OK' || !Array.isArray(data.results) || data.results.length === 0) {
+      return null;
+    }
+    const address = data.results[0]?.formatted_address;
+    return typeof address === 'string' ? address : null;
   } catch {
     return null;
   }

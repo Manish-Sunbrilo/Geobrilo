@@ -7,7 +7,8 @@ import {
   markTripStartSynced,
 } from '../db/tripsRepo';
 import { getUnsyncedTripLocations, markTripLocationsSynced } from '../db/tripLocationsRepo';
-import { pushMuster, pushTripEnd, pushTripLocation, pushTripStart } from './pushQueueApi';
+import { getUnsyncedTripEvents, markTripEventSynced } from '../db/tripEventsRepo';
+import { pushMuster, pushTripEnd, pushTripEvent, pushTripLocation, pushTripStart } from './pushQueueApi';
 
 async function currentIdentity() {
   const [session, deviceUid, companyCode] = await Promise.all([
@@ -120,9 +121,29 @@ export async function syncUnsyncedTripLocations(): Promise<void> {
   }
 }
 
+export async function syncUnsyncedTripEvents(): Promise<void> {
+  const identity = await currentIdentity();
+  const rows = await getUnsyncedTripEvents();
+  for (const row of rows) {
+    const ok = await pushTripEvent({
+      tripguid: row.tripguid,
+      eventtype: row.eventtype,
+      eventat: row.eventat,
+      detail: row.detail ?? '',
+      userid: row.userid,
+      deviceSystemId: identity.deviceUid,
+      companycode: identity.companyCode,
+    });
+    if (ok) {
+      await markTripEventSynced(row.idtripevent);
+    }
+  }
+}
+
 export async function syncAll(): Promise<void> {
   await syncUnsyncedMusters();
   await syncUnsyncedTripStarts();
   await syncUnsyncedTripEnds();
   await syncUnsyncedTripLocations();
+  await syncUnsyncedTripEvents();
 }

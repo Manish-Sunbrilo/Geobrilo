@@ -35,6 +35,7 @@ import {
   MUSTER_MISSED_CHECKOUT,
   type MusterPresenseType,
 } from '../constants/attendance';
+import { formatIstDate, formatIstTime, formatIstClock, formatIstWeekdayDate } from '../utils/datetime';
 
 const BRANCH_RADIUS_METERS = 1000;
 const MIN_DELTA = 0.00015;
@@ -73,22 +74,26 @@ type Coords = {
 };
 
 function isToday(yyyyMmDd: string): boolean {
-  const today = new Date().toISOString().slice(0, 10);
-  return today === yyyyMmDd;
+  return formatIstDate(new Date()) === yyyyMmDd;
 }
 
 /**
- * Normally "now". For a missed-checkout entry the record is dated to the day
- * it was actually missed (overrideDate), not today — only the time-of-day
- * component comes from when this screen is actually submitted, since the
- * real time they left isn't known.
+ * Normally "now", in IST wall-clock time. This value is sent to the server
+ * as musterdate and echoed back verbatim as the check-in/out clock time (see
+ * MonthlyAttendanceScreen), so it must be India time regardless of the
+ * device's own timezone setting.
+ *
+ * For a missed-checkout entry the record is dated to the day it was actually
+ * missed (overrideDate), not today — only the time-of-day component comes
+ * from when this screen is actually submitted, since the real time they left
+ * isn't known.
  */
 function buildMusterDateTime(overrideDate?: string): string {
-  const iso = new Date().toISOString();
+  const now = new Date();
   if (overrideDate) {
-    return `${overrideDate} ${iso.slice(11, 19)}`;
+    return `${overrideDate} ${formatIstTime(now)}`;
   }
-  return iso.slice(0, 19).replace('T', ' ');
+  return `${formatIstDate(now)} ${formatIstTime(now)}`;
 }
 
 function MarkAttendanceScreen() {
@@ -370,12 +375,8 @@ function MarkAttendanceScreen() {
           </View>
 
           <View style={styles.infoRow}>
-            <Text style={[styles.timeText, { color: theme.textPrimary }]}>
-              {now.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-            </Text>
-            <Text style={[styles.dateText, { color: theme.textSecondary }]}>
-              {now.toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}
-            </Text>
+            <Text style={[styles.timeText, { color: theme.textPrimary }]}>{formatIstClock(now)}</Text>
+            <Text style={[styles.dateText, { color: theme.textSecondary }]}>{formatIstWeekdayDate(now)}</Text>
           </View>
           <Text style={[styles.locationText, { color: theme.textSecondary }]}>{locationText}</Text>
           <Text style={[styles.sessionStatusText, { color: palette.primary }]}>{sessionStatusText}</Text>

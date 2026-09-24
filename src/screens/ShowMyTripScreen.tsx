@@ -94,6 +94,29 @@ function pad(n: number): string {
   return String(n).padStart(2, '0');
 }
 
+/**
+ * fitToCoordinates' own automatic zoom math misbehaves for a very tight
+ * point cluster (observed live: a ~10m-apart 2-point trip zoomed in so far
+ * past the pins that the map showed an empty street segment with neither
+ * marker visible -- not literally "gone", just zoomed straight past them).
+ * Computing the region directly, with a minimum delta floor, keeps short
+ * trips zoomed out enough to actually show their pins.
+ */
+function regionForPoints(points: LatLng[], minDelta = 0.004): Region {
+  const lats = points.map(p => p.latitude);
+  const lngs = points.map(p => p.longitude);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  return {
+    latitude: (minLat + maxLat) / 2,
+    longitude: (minLng + maxLng) / 2,
+    latitudeDelta: Math.max((maxLat - minLat) * 1.8, minDelta),
+    longitudeDelta: Math.max((maxLng - minLng) * 1.8, minDelta),
+  };
+}
+
 function ShowMyTripScreen() {
   const isDarkMode = useColorScheme() === 'dark';
   const theme = isDarkMode ? palette.dark : palette.light;
@@ -169,11 +192,9 @@ function ShowMyTripScreen() {
     const filtered = filterPoints(rawPoints);
     setPoints(filtered);
     if (filtered.length > 0) {
+      regionRef.current = regionForPoints(filtered);
       requestAnimationFrame(() => {
-        mapRef.current?.fitToCoordinates(filtered, {
-          edgePadding: { top: 60, bottom: 60, left: 60, right: 60 },
-          animated: true,
-        });
+        mapRef.current?.animateToRegion(regionRef.current, 500);
       });
       // Road-snapping is progressive enhancement: the client-side smoothed
       // path (below) renders immediately, then upgrades to the road-aligned
@@ -189,11 +210,9 @@ function ShowMyTripScreen() {
           // shift or extend beyond that framing, otherwise leaving the
           // (still-rendered) line drawn outside the visible viewport, which
           // looks exactly like the route disappearing.
+          regionRef.current = regionForPoints(result);
           requestAnimationFrame(() => {
-            mapRef.current?.fitToCoordinates(result, {
-              edgePadding: { top: 60, bottom: 60, left: 60, right: 60 },
-              animated: true,
-            });
+            mapRef.current?.animateToRegion(regionRef.current, 500);
           });
         }
       });

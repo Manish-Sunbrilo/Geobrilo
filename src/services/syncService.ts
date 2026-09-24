@@ -7,8 +7,9 @@ import {
   markTripStartSynced,
 } from '../db/tripsRepo';
 import { getUnsyncedTripLocations, markTripLocationsSynced } from '../db/tripLocationsRepo';
-import { getUnsyncedTripEvents, markTripEventSynced } from '../db/tripEventsRepo';
-import { pushMuster, pushTripEnd, pushTripEvent, pushTripLocation, pushTripStart } from './pushQueueApi';
+import { getUnsyncedAuditEvents, markAuditEventSynced } from '../db/auditEventsRepo';
+import { pushMuster, pushTripEnd, pushTripLocation, pushTripStart } from './pushQueueApi';
+import { pushAuditEvent } from './auditApi';
 
 async function currentIdentity() {
   const [session, deviceUid, companyCode] = await Promise.all([
@@ -18,6 +19,7 @@ async function currentIdentity() {
   ]);
   return {
     userid: session?.userid ?? '',
+    idsuser: session?.idsuser ?? '',
     eno: session?.eno ?? 'eeno',
     eeno: session?.eeno ?? 'eeno',
     phone1: session?.phone1 ?? '',
@@ -121,23 +123,41 @@ export async function syncUnsyncedTripLocations(): Promise<void> {
   }
 }
 
-export async function syncUnsyncedTripEvents(): Promise<void> {
+// Audit events insert-then-sync from several independent places in quick
+// succession (login, app resume, connectivity change), so overlapping calls
+// are the normal case, not an edge case -- without this guard, two calls
+// both read the same not-yet-marked-synced row and each push it, producing
+// a duplicate row on the backend even though only one event ever happened.
+let auditEventsSyncInFlight: Promise<void> | null = null;
+
+async function doSyncUnsyncedAuditEvents(): Promise<void> {
   const identity = await currentIdentity();
-  const rows = await getUnsyncedTripEvents();
+  const rows = await getUnsyncedAuditEvents();
   for (const row of rows) {
-    const ok = await pushTripEvent({
-      tripguid: row.tripguid,
+    const ok = await pushAuditEvent({
+      guid: row.guid ?? '',
       eventtype: row.eventtype,
       eventat: row.eventat,
-      detail: row.detail ?? '',
       userid: row.userid,
-      deviceSystemId: identity.deviceUid,
+      idsuser: identity.idsuser,
       companycode: identity.companyCode,
+      tripguid: row.tripguid ?? '',
+      deviceSystemId: identity.deviceUid,
+      detail: row.detail ?? '',
     });
     if (ok) {
-      await markTripEventSynced(row.idtripevent);
+      await markAuditEventSynced(row.idauditevent);
     }
   }
+}
+
+export function syncUnsyncedAuditEvents(): Promise<void> {
+  if (!auditEventsSyncInFlight) {
+    auditEventsSyncInFlight = doSyncUnsyncedAuditEvents().finally(() => {
+      auditEventsSyncInFlight = null;
+    });
+  }
+  return auditEventsSyncInFlight;
 }
 
 export async function syncAll(): Promise<void> {
@@ -145,5 +165,5 @@ export async function syncAll(): Promise<void> {
   await syncUnsyncedTripStarts();
   await syncUnsyncedTripEnds();
   await syncUnsyncedTripLocations();
-  await syncUnsyncedTripEvents();
+  await syncUnsyncedAuditEvents();
 }

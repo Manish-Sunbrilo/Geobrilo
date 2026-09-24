@@ -17,6 +17,11 @@ class MainApplication : Application(), ReactApplication {
           // Packages that cannot be autolinked yet can be added manually here, for example:
           // add(MyReactNativePackage())
         },
+      // The `standalone` build type embeds the JS bundle into the APK (see
+      // android/app/build.gradle) specifically so it doesn't need a live Metro
+      // connection -- useDevSupport must be false there to actually use that
+      // embedded bundle instead of trying to reach the dev server.
+      useDevSupport = !BuildConfig.STANDALONE,
     )
   }
 

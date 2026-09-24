@@ -12,6 +12,7 @@ const KEYS = {
   trackingState: 'geobrilo_tracking_state',
   deviceConfig: 'geobrilo_device_config',
   lastAliveAt: 'geobrilo_last_alive_at',
+  lastKnownConnected: 'geobrilo_last_known_connected',
 } as const;
 
 async function getOrCreate(key: string): Promise<string> {
@@ -111,4 +112,20 @@ export async function getLastAliveAt(): Promise<string | null> {
 
 export async function setLastAliveAt(value: string): Promise<void> {
   await AsyncStorage.setItem(KEYS.lastAliveAt, value);
+}
+
+/**
+ * Persisted (not just in-memory) so a connectivity reconciliation check can
+ * still compare against "what we knew before" even after the app process
+ * itself was killed and relaunched fresh while backgrounded -- an in-memory
+ * ref alone resets to unknown on every fresh JS engine start, which is
+ * exactly when a missed transition is most likely (see useAuditEvents.ts).
+ */
+export async function getLastKnownConnected(): Promise<boolean | null> {
+  const raw = await AsyncStorage.getItem(KEYS.lastKnownConnected);
+  return raw === null ? null : raw === '1';
+}
+
+export async function setLastKnownConnected(value: boolean): Promise<void> {
+  await AsyncStorage.setItem(KEYS.lastKnownConnected, value ? '1' : '0');
 }

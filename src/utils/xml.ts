@@ -19,6 +19,43 @@ export function buildPassDataXml(fields: Array<[string, string]>): string {
   return `<passdata><request><fdata>${buildFieldsXml(fields)}</fdata></request></passdata>`;
 }
 
+function buildColumnListXml(fields: Array<[string, string]>): string {
+  return `<columnlist>${fields
+    .map(([name, value]) => `<column><columnname>${name}</columnname><columnvalue>${escapeXml(value)}</columnvalue></column>`)
+    .join('')}</columnlist>`;
+}
+
+/**
+ * The "generalaudit" service's inner payload. Field placement is confirmed
+ * from two sources: the actual deployed backend script
+ * (pulsar100dev/external_interface/pulsar_api/service/x_api_common_service_push.php,
+ * which reads /passdata/request/fdata/companycode and
+ * /passdata/request/fdata/servicelist/service -- so companycode has to be a
+ * sibling of servicelist inside <fdata>, not left in the outer
+ * <queuemessagerequest> wrapper, since only <passdata> gets forwarded
+ * downstream), and the reference Android app's GeneralAuditWorker.java
+ * (KrishnaeAttendance), which sends columndata fields userid/eeno/name/
+ * eventcode and rawdata fields tripguid/deviceuid/androidid for this exact
+ * service. columndata fields become real DB columns on the backend (unlike
+ * rawdata, which gets JSON-blobbed into a single column).
+ */
+export function buildGeneralAuditServiceXml(
+  companyCode: string,
+  columnFields: Array<[string, string]>,
+  rawFields: Array<[string, string]>,
+): string {
+  return (
+    `<companycode>${escapeXml(companyCode)}</companycode>` +
+    `<servicelist><service>` +
+    `<serviceinfo><servicename>generalaudit</servicename></serviceinfo>` +
+    `<servicedata>` +
+    `<columndata>${buildColumnListXml(columnFields)}</columndata>` +
+    `<rawdata>${buildColumnListXml(rawFields)}</rawdata>` +
+    `</servicedata>` +
+    `</service></servicelist>`
+  );
+}
+
 export function parseXmlDocument(xmlText: string): unknown {
   return parser.parse(xmlText);
 }

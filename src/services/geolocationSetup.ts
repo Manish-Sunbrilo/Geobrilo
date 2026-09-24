@@ -16,6 +16,20 @@ const LOCATION_CONFIG = {
     desiredAccuracy: DesiredAccuracy.High,
     distanceFilter: 10,
     locationAuthorizationRequest: 'Always' as const,
+    // iOS's own equivalent of Android's Stop-Detection System: Core
+    // Location's `pausesLocationUpdatesAutomatically` (default true)
+    // silently pauses updates once it decides the device is stationary,
+    // producing the exact same "trip only ever gets one point" symptom
+    // observed there. This is the direct iOS-side fix, alongside
+    // `activity.disableStopDetection` below for Android.
+    pausesLocationUpdatesAutomatically: false,
+    // The plugin's own native "location settings" popup (Android:
+    // TSLocationManagerActivity) was firing on every single location call
+    // even though Android's own permission grants (fine/coarse/background)
+    // were already confirmed true via `dumpsys package` -- its own internal
+    // detection doesn't agree, and there's no reason to route around our
+    // in-app permission handling with a second native prompt anyway.
+    disableLocationAuthorizationAlert: true,
   },
   // Confirmed via the SDK's own internal log (transistor_log.db) that this
   // belongs under `activity`, NOT `geolocation` -- placing it under

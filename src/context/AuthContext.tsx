@@ -1,5 +1,8 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { clearSession, getSession, isProvisioned, saveSession } from '../services/storage';
+import { insertAuditEvent, E_LOGIN, E_LOGOUT } from '../db/auditEventsRepo';
+import { syncUnsyncedAuditEvents } from '../services/syncService';
+import { formatIstDateTime } from '../utils/datetime';
 import type { SUser } from '../types/auth';
 
 type AuthContextValue = {
@@ -30,11 +33,24 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const setUser = async (nextUser: SUser) => {
     await saveSession(nextUser);
     setUserState(nextUser);
+    if (nextUser.userid) {
+      insertAuditEvent(E_LOGIN, formatIstDateTime(), nextUser.userid, '', '')
+        .then(() => syncUnsyncedAuditEvents())
+        .catch(() => undefined);
+    }
   };
 
   const markSignedUp = () => setProvisioned(true);
 
   const logout = async () => {
+    if (user?.userid) {
+      try {
+        await insertAuditEvent(E_LOGOUT, formatIstDateTime(), user.userid, '', '');
+        await syncUnsyncedAuditEvents();
+      } catch {
+        // Best-effort -- still proceed with logout below even if this fails.
+      }
+    }
     await clearSession();
     setUserState(null);
   };

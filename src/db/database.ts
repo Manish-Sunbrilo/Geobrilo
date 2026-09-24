@@ -36,11 +36,15 @@ const SCHEMA_STATEMENTS = [
     syncdate TEXT DEFAULT NULL,
     is_sent INTEGER DEFAULT 0
   );`,
-  `CREATE TABLE IF NOT EXISTS tripevents (
-    idtripevent INTEGER PRIMARY KEY AUTOINCREMENT,
-    tripguid TEXT,
+  // Audit events (login/logout, app backgrounded, connectivity loss, device
+  // gap detection) -- app-wide, not scoped to an active trip, so tripguid is
+  // optional/empty for events that aren't tied to one.
+  `CREATE TABLE IF NOT EXISTS auditevents (
+    idauditevent INTEGER PRIMARY KEY AUTOINCREMENT,
+    guid TEXT,
     eventtype TEXT,
     eventat TEXT,
+    tripguid TEXT,
     detail TEXT,
     userid TEXT,
     syncdate TEXT DEFAULT NULL,
@@ -69,6 +73,7 @@ const SCHEMA_STATEMENTS = [
 // CREATE TABLE IF NOT EXISTS won't retrofit it onto an existing table.
 const MIGRATION_STATEMENTS = [
   `ALTER TABLE muster ADD COLUMN musterpresensetype TEXT DEFAULT 'MP0005';`,
+  `ALTER TABLE auditevents ADD COLUMN guid TEXT;`,
 ];
 
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {

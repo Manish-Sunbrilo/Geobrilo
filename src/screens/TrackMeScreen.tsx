@@ -31,6 +31,8 @@ import MapTypeToggle from '../components/MapTypeToggle';
 
 const MIN_DELTA = 0.00015;
 const MAX_DELTA = 40;
+/** Camera tilt (degrees) needed for 3D building shapes to actually show height instead of a flat outline. */
+const BUILDING_TILT_PITCH = 45;
 
 const palette = {
   primary: '#4F46E5',
@@ -141,38 +143,54 @@ function TrackMeScreen() {
     });
   };
 
+  const handleIncomingLocation = async (guid: string, location: Location) => {
+    // Defensive: an occasional malformed/partial location event (observed
+    // on iOS right after start()) can arrive without `coords` -- skip it
+    // rather than crash the whole screen on `.latitude` of undefined.
+    if (!location?.coords) {
+      console.warn('[TrackMe] location fired without coords, skipping:', location);
+      return;
+    }
+    const point: LatLng = { latitude: location.coords.latitude, longitude: location.coords.longitude };
+    const nextPath = [...pathRef.current, point];
+    pathRef.current = nextPath;
+    setPath(nextPath);
+    // GPS heading is -1 (undefined) when the device isn't moving fast
+    // enough for a reliable bearing -- keep pointing the last known
+    // direction rather than snapping to an arbitrary value.
+    if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
+      setHeading(location.coords.heading);
+    }
+    setLastAliveAt(formatIstDateTime()).catch(() => undefined);
+    maybeSnapLivePath(nextPath);
+    if (!user) {
+      return;
+    }
+    await insertTripLocation(
+      guid,
+      location.coords.latitude,
+      location.coords.longitude,
+      location.coords.accuracy,
+      location.coords.altitude ?? 0,
+      location.coords.speed ?? 0,
+      location.coords.heading ?? 0,
+      formatIstDateTime(new Date()),
+      user.userid,
+    );
+    syncUnsyncedTripLocations().catch(() => undefined);
+  };
+
   const attachLocationListener = async (guid: string) => {
     await ensureLocationReady();
     subscriptionRef.current?.remove();
-    subscriptionRef.current = BackgroundGeolocation.onLocation(async (location: Location) => {
-      const point: LatLng = { latitude: location.coords.latitude, longitude: location.coords.longitude };
-      const nextPath = [...pathRef.current, point];
-      pathRef.current = nextPath;
-      setPath(nextPath);
-      // GPS heading is -1 (undefined) when the device isn't moving fast
-      // enough for a reliable bearing -- keep pointing the last known
-      // direction rather than snapping to an arbitrary value.
-      if (typeof location.coords.heading === 'number' && location.coords.heading >= 0) {
-        setHeading(location.coords.heading);
-      }
-      setLastAliveAt(formatIstDateTime()).catch(() => undefined);
-      maybeSnapLivePath(nextPath);
-      if (!user) {
-        return;
-      }
-      await insertTripLocation(
-        guid,
-        location.coords.latitude,
-        location.coords.longitude,
-        location.coords.accuracy,
-        location.coords.altitude ?? 0,
-        location.coords.speed ?? 0,
-        location.coords.heading ?? 0,
-        formatIstDateTime(new Date()),
-        user.userid,
-      );
-      syncUnsyncedTripLocations().catch(() => undefined);
-    });
+    subscriptionRef.current = BackgroundGeolocation.onLocation(
+      (location: Location) => {
+        handleIncomingLocation(guid, location);
+      },
+      (error: unknown) => {
+        console.warn('[TrackMe] onLocation error:', error);
+      },
+    );
   };
 
   const handleStart = async () => {
@@ -208,6 +226,15 @@ function TrackMeScreen() {
       // recording further points for the rest of the trip.
       await BackgroundGeolocation.changePace(true);
       await attachLocationListener(guid);
+      // start()'s own first fix can take a while on a cold GPS lock --
+      // request one explicitly, accepting a recent cached position
+      // (maximumAge) and a loose accuracy (100m, vs the plugin's default
+      // 25m stationaryRadius) so a fast network/wifi fix can satisfy this
+      // immediately instead of blocking for a full satellite lock. The
+      // ongoing onLocation stream (above) keeps refining accuracy regardless.
+      BackgroundGeolocation.getCurrentPosition({ persist: true, maximumAge: 10000, timeout: 30, desiredAccuracy: 100 })
+        .then(location => handleIncomingLocation(guid, location))
+        .catch(err => console.warn('[TrackMe] getCurrentPosition failed:', err));
     } catch {
       Alert.alert('Could not start tracking', 'Please check location permissions and try again.');
     } finally {
@@ -229,7 +256,12 @@ function TrackMeScreen() {
 
       subscriptionRef.current?.remove();
       subscriptionRef.current = null;
-      await BackgroundGeolocation.stop();
+      // Downgrade to lightweight geofences-only mode instead of a full
+      // stop() -- useAuditEvents engages that mode as soon as the user logs
+      // in and expects it to keep running for app/device/connectivity audit
+      // events independent of whether a trip is active, not just stop dead
+      // the moment this trip ends.
+      await BackgroundGeolocation.startGeofences();
       await clearTrackingState();
 
       setIsTracking(false);
@@ -271,16 +303,34 @@ function TrackMeScreen() {
     if (!lastPoint) {
       return;
     }
+    // Turn-by-turn-style auto-follow: rotate the camera to match travel
+    // direction (not just recentering) while a trip is actively tracking, so
+    // "up" on screen means "the way you're going" -- same as Uber/Zomato's
+    // live rider view. DirectionArrowMarker's rotation is an absolute compass
+    // bearing (not screen-relative), so once the camera heading matches it,
+    // the arrow lands pointing straight up on screen for free. Only while
+    // isTracking -- once a trip ends this stays frozen at its last heading
+    // rather than fighting the user's own panning while reviewing the route.
     if (!hasCenteredRef.current) {
       const next: Region = { latitude: lastPoint.latitude, longitude: lastPoint.longitude, latitudeDelta: 0.01, longitudeDelta: 0.01 };
       regionRef.current = next;
       hasCenteredRef.current = true;
       mapRef.current?.animateToRegion(next, 500);
+      // animateToRegion has no pitch/heading params -- 3D building shapes
+      // (showsBuildings above) only actually render with visible height once
+      // the camera is tilted, and the follow-rotation needs a separate call too.
+      mapRef.current?.animateCamera(
+        { pitch: BUILDING_TILT_PITCH, heading: isTracking ? heading : 0 },
+        { duration: 500 },
+      );
     } else {
-      mapRef.current?.animateCamera({ center: lastPoint }, { duration: 500 });
+      mapRef.current?.animateCamera(
+        { center: lastPoint, pitch: BUILDING_TILT_PITCH, heading: isTracking ? heading : 0 },
+        { duration: 500 },
+      );
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastPoint?.latitude, lastPoint?.longitude]);
+  }, [lastPoint?.latitude, lastPoint?.longitude, heading, isTracking]);
 
   const handleZoom = (factor: number) => {
     const current = regionRef.current;
@@ -301,6 +351,7 @@ function TrackMeScreen() {
           style={styles.map}
           mapType={mapType}
           initialRegion={regionRef.current}
+          showsBuildings
           onRegionChangeComplete={region => {
             regionRef.current = region;
           }}

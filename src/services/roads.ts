@@ -33,6 +33,26 @@ function nearestDistanceMeters(point: LatLng, candidates: LatLng[]): number {
   return min;
 }
 
+function pathLengthMeters(points: LatLng[]): number {
+  let total = 0;
+  for (let i = 1; i < points.length; i++) {
+    total += haversineMeters(points[i - 1], points[i]);
+  }
+  return total;
+}
+
+/**
+ * Below this fraction of the *original recorded path's total length*, a
+ * snap is rejected even if every individual point passed the per-point
+ * drift check above -- that check alone missed a real bug: a genuine
+ * out-and-back excursion (e.g. a ~100m westward walk and back) got pulled
+ * onto the nearest through-road and collapsed into a short straight
+ * segment, silently erasing real recorded movement, because every
+ * individual snapped point still landed within MAX_POINT_DRIFT_METERS of
+ * *some* original point even though the overall shape was gone.
+ */
+const MIN_LENGTH_RATIO = 0.6;
+
 /**
  * Snaps a recorded GPS trace onto the most likely roads travelled, via
  * Google's Roads API (the purpose-built tool for this -- Directions API
@@ -86,6 +106,11 @@ export async function snapToRoads(points: LatLng[]): Promise<LatLng[]> {
   // a real 4-point trip that lost its last 2 points) is exactly the
   // unreliable case this guards against, not a borderline-acceptable one.
   if (matchRatio <= MIN_MATCH_RATIO || maxDrift > MAX_POINT_DRIFT_METERS) {
+    return points;
+  }
+
+  const originalLength = pathLengthMeters(points);
+  if (originalLength > 0 && pathLengthMeters(snapped) / originalLength < MIN_LENGTH_RATIO) {
     return points;
   }
 

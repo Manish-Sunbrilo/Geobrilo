@@ -138,9 +138,18 @@ function MarkAttendanceScreen() {
       try {
         await ensureLocationReady();
         await BackgroundGeolocation.requestPermission();
+        // No desiredAccuracy here defaults to the plugin's stationaryRadius
+        // (25m), which blocks until a full GPS lock arrives and discards the
+        // network/wifi-based fix (~100m accuracy) Android can usually return
+        // in under a second -- that's the real cause of the slow "Fetching
+        // location..." delay. 100m is still tighter than BRANCH_RADIUS_METERS
+        // (1000), so it's accurate enough for the geofence check this feeds.
         const location = await BackgroundGeolocation.getCurrentPosition({
           samples: 1,
           persist: false,
+          maximumAge: 10000,
+          timeout: 30,
+          desiredAccuracy: 100,
         });
         const nextCoords: Coords = {
           latitude: location.coords.latitude,
@@ -343,6 +352,13 @@ function MarkAttendanceScreen() {
                   style={styles.map}
                   mapType={mapType}
                   initialRegion={regionRef.current}
+                  showsBuildings
+                  onMapReady={() => {
+                    // initialRegion has no pitch param -- 3D building shapes
+                    // only render with visible height once the camera is
+                    // tilted, so this tilts it right after the map mounts.
+                    mapRef.current?.animateCamera({ pitch: 45 }, { duration: 400 });
+                  }}
                   onRegionChangeComplete={region => {
                     regionRef.current = region;
                   }}

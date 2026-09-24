@@ -26,15 +26,16 @@
         android:name="com.google.android.geo.API_KEY"
         android:value="AIzaSyA54I3pccCD6ZP5oKr7FQEDqRz5kDm3InE" />
       <!--
-        Placeholder Transistorsoft license key. react-native-background-geolocation
+        No Transistorsoft license key configured yet. react-native-background-geolocation
         blocks location permission requests in RELEASE builds on Android without a
-        valid key scoped to this app's package name (com.geobrilo). Debug builds work
-        fine without it. Get a key from https://docs.transistorsoft.com and replace
-        the value below before shipping a release build that needs location/tracking.
+        valid key scoped to this app's package name (com.geobrilo). The meta-data tag
+        is omitted entirely (rather than a placeholder string) since a garbage value
+        here triggers a hard "LICENSE VALIDATION FAILURE" from the native SDK even in
+        debug builds. Get a real key from https://docs.transistorsoft.com, scoped to
+        com.geobrilo, and add it back as:
+          <meta-data android:name="com.transistorsoft.locationmanager.license" android:value="YOUR_KEY" />
+        before shipping a release build that needs location/tracking.
       -->
-      <meta-data
-        android:name="com.transistorsoft.locationmanager.license"
-        android:value="REPLACE_WITH_TRANSISTORSOFT_LICENSE_KEY" />
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

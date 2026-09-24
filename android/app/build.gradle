@@ -93,9 +93,31 @@ android {
             keyPassword 'android'
         }
     }
+    buildFeatures {
+        buildConfig true
+    }
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            buildConfigField "boolean", "STANDALONE", "false"
+        }
+        // A debuggable-but-standalone variant: same signing/debuggable config as
+        // `debug` (so react-native-background-geolocation's license check still
+        // sees a debuggable install and grants its free "try before you buy" pass),
+        // but its name isn't in the React Native Gradle plugin's `debuggableVariants`
+        // list (default: debug, debugOptimized), so the plugin bundles and embeds
+        // the JS + assets into the APK exactly like a release build -- no Metro/
+        // laptop connection needed at runtime. See MainApplication.kt, which reads
+        // BuildConfig.STANDALONE to decide whether to use that embedded bundle
+        // instead of trying to reach the dev server.
+        standalone {
+            initWith debug
+            matchingFallbacks = ['debug']
+            buildConfigField "boolean", "STANDALONE", "true"
+            // Not auto-set by the React Native Gradle plugin for custom build
+            // type names (only for debug/release/debugOptimized) -- set to
+            // match debug's value since this variant is debug-based.
+            manifestPlaceholders["usesCleartextTraffic"] = "true"
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -103,6 +125,15 @@ android {
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            buildConfigField "boolean", "STANDALONE", "false"
+            // Without a paid Transistorsoft license key, react-native-background-geolocation
+            // only functions on a debuggable install (its own "try before you buy" pass) --
+            // otherwise every location API call fails immediately with a license validation
+            // error (confirmed live via logcat: "LICENSE VALIDATION FAILURE"). This build
+            // already ships signed with the debug keystore rather than a real release key,
+            // so marking it debuggable too doesn't change its actual distribution security
+            // posture, and unblocks Track Me / Mark Attendance / audit events on this variant.
+            debuggable true
         }
     }
 }
